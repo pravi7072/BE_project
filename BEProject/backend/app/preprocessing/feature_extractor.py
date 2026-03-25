@@ -1,4 +1,3 @@
-# backend/app/preprocessing/feature_extractor.py
 import torch
 import torchaudio
 import librosa
@@ -8,15 +7,19 @@ from typing import Tuple, Optional
 
 class FeatureExtractor:
     """
-    🚀 Production-ready feature extractor (optimized for speed and stability).
-    - Uses GPU-accelerated torchaudio ops when available.
-    - Ensures minimal CPU↔GPU transfer.
-    - Handles fallbacks for NaN / invalid tensors.
+    🚀 Production-ready feature extractor (optimized for stability).
+
+    FINAL NOTES:
+    - Uses CPU to avoid GPU OOM
+    - Produces LOG-MEL (only once)
+    - Fully aligned with training + inference
     """
 
     def __init__(self, config):
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # ✅ KEEP CPU (important for your setup)
+        self.device = torch.device("cpu")
 
         # ---- Audio / Feature Parameters ----
         self.sample_rate = config.audio.sample_rate
@@ -28,18 +31,17 @@ class FeatureExtractor:
         self.fmin = getattr(config.audio, "fmin", 0)
         self.fmax = getattr(config.audio, "fmax", self.sample_rate // 2)
 
-        # ---- Cached transforms (keep on GPU) ----
+        # ---- Cached transforms ----
         self._init_transforms()
 
-        # Pre-allocate dummy tensors to avoid CUDA memory reallocation per batch
-        self._dummy_audio = torch.zeros(1, self.sample_rate, device=self.device)
-        self._dummy_mel = torch.zeros(1, self.n_mels, 100, device=self.device)
+        # Dummy fallback
+        self._dummy_audio = torch.zeros(1, self.sample_rate)
+        self._dummy_mel = torch.zeros(1, self.n_mels, 100)
 
     # ==========================================================
-    # 🔧 TRANSFORM INITIALIZATION
+    # 🔧 TRANSFORMS
     # ==========================================================
     def _init_transforms(self):
-        """Initialize and cache torchaudio transforms."""
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=self.sample_rate,
             n_fft=self.n_fft,
@@ -49,8 +51,8 @@ class FeatureExtractor:
             f_min=self.fmin,
             f_max=self.fmax,
             power=2.0,
-            normalized=True,
-        ).to(self.device)
+            normalized=False,
+        )
 
         self.mfcc_transform = torchaudio.transforms.MFCC(
             sample_rate=self.sample_rate,
@@ -62,13 +64,13 @@ class FeatureExtractor:
                 "f_min": self.fmin,
                 "f_max": self.fmax,
             },
-        ).to(self.device)
+        )
 
         self.inverse_mel = torchaudio.transforms.InverseMelScale(
             n_stft=self.n_fft // 2 + 1,
             n_mels=self.n_mels,
             sample_rate=self.sample_rate,
-        ).to(self.device)
+        )
 
         self.griffin_lim = torchaudio.transforms.GriffinLim(
             n_fft=self.n_fft,
@@ -76,49 +78,76 @@ class FeatureExtractor:
             win_length=self.win_length,
             n_iter=32,
             power=2.0,
-        ).to(self.device)
+        )
 
     # ==========================================================
-    # 🎵 MEL SPECTROGRAM
+    # 🎵 MEL SPECTROGRAM (CORRECT)
     # ==========================================================
     @torch.inference_mode()
     def extract_mel(self, audio: torch.Tensor, return_db: bool = True) -> torch.Tensor:
-        """Compute Mel spectrogram (with GPU acceleration and NaN safety)."""
+        import librosa
+        import numpy as np
+
         try:
+            # -----------------------------
+            # Ensure tensor format
+            # -----------------------------
             if isinstance(audio, np.ndarray):
                 audio = torch.from_numpy(audio).float()
 
-            if audio.dim() == 1:
-                audio = audio.unsqueeze(0)
+            if audio.dim() == 2:
+                audio = audio.squeeze(0)
 
-            if audio.numel() == 0 or torch.all(audio == 0):
-                return self._dummy_mel.clone().cpu()
+            if audio.numel() == 0:
+                return self._dummy_mel.clone()
 
-            # Non-blocking GPU transfer
-            audio = audio.to(self.device, non_blocking=True)
+            # -----------------------------
+            # Convert to numpy
+            # -----------------------------
+            audio_np = audio.cpu().numpy()
 
-            # Compute mel
-            mel = self.mel_transform(audio)
+            # -----------------------------
+            # MEL SPECTROGRAM (HiFi-GAN MATCH)
+            # -----------------------------
+            mel = librosa.feature.melspectrogram(
+                y=audio_np,
+                sr=self.sample_rate,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                win_length=self.win_length,
+                n_mels=self.n_mels,
+                fmin=self.fmin,
+                fmax=self.fmax,
+                power=2.0   # ✅ CRITICAL (HiFi-GAN standard)
+            )
 
-            # Convert to decibels for perceptual scaling
-            if return_db:
-                mel = torchaudio.functional.amplitude_to_DB(
-                    mel, multiplier=10.0, amin=1e-10, db_multiplier=0.0
-                )
+            # -----------------------------
+            # LOG SCALE (NATURAL LOG)
+            # -----------------------------
+            mel = np.log(np.clip(mel, 1e-5, None))
+            mel = np.clip(mel, -11.5, 2.0)
 
+            # -----------------------------
+            # Convert back to tensor
+            # -----------------------------
+            mel = torch.from_numpy(mel).unsqueeze(0).float()
+
+            # -----------------------------
+            # Safety (NaN / Inf handling)
+            # -----------------------------
             mel = torch.nan_to_num(mel, nan=0.0, posinf=0.0, neginf=0.0)
-            return mel.cpu()
+
+            return mel
 
         except Exception as e:
             print(f"[ERROR] extract_mel failed: {e}")
-            return self._dummy_mel.clone().cpu()
+            return self._dummy_mel.clone()
 
     # ==========================================================
-    # 🎵 MFCC EXTRACTION
+    # 🎵 MFCC
     # ==========================================================
     @torch.inference_mode()
     def extract_mfcc(self, audio: torch.Tensor) -> torch.Tensor:
-        """Compute MFCCs efficiently with GPU fallback."""
         try:
             if isinstance(audio, np.ndarray):
                 audio = torch.from_numpy(audio).float()
@@ -129,7 +158,7 @@ class FeatureExtractor:
             if audio.numel() == 0:
                 return torch.zeros((1, self.n_mfcc, 100))
 
-            audio = audio.to(self.device, non_blocking=True)
+            audio = audio.to("cpu")
             mfcc = self.mfcc_transform(audio)
             mfcc = torch.nan_to_num(mfcc, nan=0.0, posinf=0.0, neginf=0.0)
             return mfcc.cpu()
@@ -143,13 +172,15 @@ class FeatureExtractor:
     # ==========================================================
     @torch.inference_mode()
     def mel_to_audio(self, mel: torch.Tensor, use_griffin_lim: bool = True) -> torch.Tensor:
-        """Convert mel back to audio using Griffin-Lim or librosa inverse."""
         try:
             if mel.dim() == 2:
                 mel = mel.unsqueeze(0)
 
-            mel = mel.to(self.device)
-            mel = torchaudio.functional.DB_to_amplitude(mel, ref=1.0, power=0.5)
+            mel = mel.to("cpu")
+
+            # NOTE: Not critical for your pipeline (vocoder used instead)
+            # mel = torchaudio.functional.DB_to_amplitude(mel, ref=1.0, power=0.5)
+            mel = torch.exp(mel)
             mel = torch.nan_to_num(mel)
 
             if use_griffin_lim:
@@ -177,7 +208,6 @@ class FeatureExtractor:
     # ==========================================================
     @torch.inference_mode()
     def compute_stft(self, audio: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute STFT magnitude + phase."""
         try:
             if isinstance(audio, np.ndarray):
                 audio = torch.from_numpy(audio).float()
@@ -188,7 +218,8 @@ class FeatureExtractor:
             if audio.numel() == 0:
                 raise ValueError("Empty input")
 
-            audio = audio.to(self.device, non_blocking=True)
+            audio = audio.to("cpu")
+
             stft = torch.stft(
                 audio,
                 n_fft=self.n_fft,
@@ -196,8 +227,10 @@ class FeatureExtractor:
                 win_length=self.win_length,
                 return_complex=True,
             )
+
             mag = torch.abs(stft)
             phase = torch.angle(stft)
+
             return mag.cpu(), phase.cpu()
 
         except Exception as e:

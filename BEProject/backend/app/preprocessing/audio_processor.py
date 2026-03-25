@@ -189,7 +189,7 @@ class AudioProcessor:
                 pad_len = self._n_fft - len(audio)
                 audio = np.pad(audio, (0, pad_len))
 
-            audio = self.apply_preemphasis(audio)
+            # audio = self.apply_preemphasis(audio)
 
             # final sanity
             if np.isnan(audio).any() or np.all(audio == 0):

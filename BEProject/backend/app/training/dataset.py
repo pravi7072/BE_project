@@ -29,7 +29,8 @@ class DysarthricSpeechDataset(Dataset):
         self.config = config
         self.split = split
         self.cache_enabled = cache
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
 
         # Core processors
         self.audio_processor = AudioProcessor(config)
@@ -92,7 +93,7 @@ class DysarthricSpeechDataset(Dataset):
     def _load_and_process(self, idx: int) -> Dict[str, torch.Tensor]:
         # Select paired files safely
         dys_path = self.dysarthric_files[idx % len(self.dysarthric_files)]
-        clr_path = self.clear_files[idx % len(self.clear_files)]
+        clr_path = random.choice(self.clear_files)
 
         # Load raw audio
         dys_audio = self.audio_processor.load_audio(dys_path)
@@ -123,19 +124,20 @@ class DysarthricSpeechDataset(Dataset):
         dys_mel = self.feature_extractor.extract_mel(dys_wave)
         clr_mel = self.feature_extractor.extract_mel(clr_wave)
 
+
         if dys_mel is None or clr_mel is None or dys_mel.numel() == 0 or clr_mel.numel() == 0:
             raise ValueError("Invalid mel returned.")
 
         # Trim / pad
-        max_len = min(dys_mel.size(-1), clr_mel.size(-1), 400)
+        max_len = min(dys_mel.size(-1), clr_mel.size(-1))
         dys_mel = self._pad_or_trim(dys_mel, max_len)
         clr_mel = self._pad_or_trim(clr_mel, max_len)
 
-        # Remove batch dim if exists
-        if dys_mel.dim() == 3 and dys_mel.size(0) == 1:
-            dys_mel = dys_mel.squeeze(0)
-        if clr_mel.dim() == 3 and clr_mel.size(0) == 1:
-            clr_mel = clr_mel.squeeze(0)
+        # # Remove batch dim if exists
+        # if dys_mel.dim() == 3 and dys_mel.size(0) == 1:
+        #     dys_mel = dys_mel.squeeze(0)
+        # if clr_mel.dim() == 3 and clr_mel.size(0) == 1:
+        #     clr_mel = clr_mel.squeeze(0)
 
         return {
             "dysarthric_mel": dys_mel,
@@ -174,8 +176,6 @@ class DysarthricSpeechDataset(Dataset):
         return audio
 
     def _pad_or_trim(self, mel: torch.Tensor, max_len: int) -> torch.Tensor:
-        if mel.dim() == 2:
-            mel = mel.unsqueeze(0)
         mel_len = mel.size(-1)
         if mel_len > max_len:
             start = random.randint(0, mel_len - max_len)

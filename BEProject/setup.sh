@@ -101,15 +101,12 @@ echo -e "${GREEN}✓ Tests completed${NC}"
 
 # Step 10: Summary
 echo -e "\n${YELLOW}[10/10] Setup Summary${NC}"
-echo "=================================================="
+echo
 echo -e "${GREEN}✓ Setup completed successfully!${NC}"
 echo ""
 echo "Your system is ready to use!"
 echo ""
-echo "Next steps:"
-echo "  1. Train model:    python scripts/train.py --epochs 10"
-echo "  2. Start backend:  python -m backend.app.main"
+echo "Next steps:" echo "  1. Train model:    python scripts/train.py --epochs 10" echo "  2. Start backend:  python -m backend.app.main"
 echo "  3. Start frontend: cd frontend && npm start"
 echo ""
 echo "Or use Docker:      docker-compose up --build"
-echo "=================================================="

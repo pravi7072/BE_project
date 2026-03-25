@@ -1,4 +1,3 @@
-
 # scripts/inference.py
 
 import sys
@@ -31,24 +30,36 @@ def main():
     config = Config()
     config.device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
 
-    # 🔴 Disable unstable inference tricks
+    # Disable unstable inference tricks
     config.use_half_precision = False
     config.use_quantization = False
 
+    print("CUDA available:", torch.cuda.is_available())
+    print("Using device:", config.device)
+
+    # -------------------------------
+    # Load models
+    # -------------------------------
     print("Loading models...")
     model_manager = ModelManager(config, args.checkpoint)
     print("Models loaded successfully!")
     print(model_manager.get_model_info())
 
+    # -------------------------------
     # Initialize processors
+    # -------------------------------
     audio_processor = AudioProcessor(config)
     feature_extractor = FeatureExtractor(config)
 
-    # Create output directory
+    # -------------------------------
+    # Output directory
+    # -------------------------------
     output_path = Path(args.output)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Get input files
+    # -------------------------------
+    # Input files
+    # -------------------------------
     input_path = Path(args.input)
     if input_path.is_file():
         audio_files = [input_path]
@@ -60,51 +71,71 @@ def main():
 
     print(f"Found {len(audio_files)} audio files to process")
 
-    # --------------------------------
-    # Inference
-    # --------------------------------
+    # -------------------------------
+    # Inference loop
+    # -------------------------------
     for audio_file in audio_files:
         print(f"\nProcessing: {audio_file.name}")
 
         try:
+            # ---------------------------
             # Load & preprocess
+            # ---------------------------
             audio = audio_processor.preprocess_pipeline(
                 audio_processor.load_audio(str(audio_file))
             )
 
+            # ---------------------------
             # Extract mel
+            # ---------------------------
             mel = feature_extractor.extract_mel(torch.FloatTensor(audio))
 
-            # Ensure proper shape: (1, n_mels, T)
+
+            # Ensure shape
             if mel.dim() == 2:
                 mel = mel.unsqueeze(0)
 
-            print("Input mel shape:", mel.shape)
+            if mel.dim() == 3 and mel.size(0) != 1:
+                mel = mel[:1]
 
+            mel = mel.to(config.device)
+            print("Mel min/max:", mel.min().item(), mel.max().item())
+
+            print("Input mel shape:", mel.shape, "| device:", mel.device)
+
+            # ---------------------------
             # Convert
+            # ---------------------------
             print("Converting...")
             with torch.no_grad():
                 audio_clear = model_manager.convert(mel)
 
+            # ---------------------------
+            # Validate output
+            # ---------------------------
+            if audio_clear is None or audio_clear.numel() == 0:
+                raise ValueError("Model returned empty output")
+
             print("Generated audio shape:", audio_clear.shape)
 
             # ---------------------------
-            # Post-processing (CRITICAL)
+            # Post-processing
             # ---------------------------
-            audio_clear_np = audio_clear.squeeze().cpu().numpy()
+            audio_clear_np = audio_clear.squeeze().detach().cpu().numpy()
 
             # Remove NaNs/Infs
             audio_clear_np = np.nan_to_num(audio_clear_np)
 
-            # Normalize safely (prevent clipping / silence)
+            # Safe normalization
             max_val = np.max(np.abs(audio_clear_np))
-            if max_val > 0:
-                audio_clear_np = audio_clear_np / max_val
+            audio_clear_np = audio_clear_np / (max_val + 1e-6)
 
-            # Apply deemphasis
+            # De-emphasis
             audio_clear_np = audio_processor.apply_deemphasis(audio_clear_np)
 
-            # Save
+            # ---------------------------
+            # Save output
+            # ---------------------------
             output_file = output_path / f"{audio_file.stem}_clear.wav"
             audio_processor.save_audio(audio_clear_np, str(output_file))
 

@@ -54,7 +54,7 @@ class AudioMetrics:
         
         # PESQ
         pesq_score = AudioMetrics.compute_pesq(reference, converted, sr)
-        if pesq_score:
+        if pesq_score is not None:
             metrics['pesq'] = pesq_score
         
         # STOI

@@ -12,7 +12,7 @@ import torch
 @dataclass
 class AudioConfig:
     """Audio processing configuration"""
-    sample_rate: int = 16000
+    sample_rate: int = 22050
     n_fft: int = 1024
     hop_length: int = 256
     win_length: int = 1024
@@ -56,7 +56,7 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     """Training configuration"""
-    batch_size: int = 2
+    batch_size: int = 3
     num_epochs: int = 50
     learning_rate: float = 0.0002
     beta1: float = 0.5
@@ -64,8 +64,8 @@ class TrainingConfig:
 
     # 💡 Performance settings
     accum_steps: int = 2                   # Gradient accumulation
-    vocoder_update_interval: int = 4       # Update vocoder every N steps
-    offload_vocoder_to_cpu: bool = True    # Saves GPU memory
+    vocoder_update_interval: int = 2      # Update vocoder every N steps
+    offload_vocoder_to_cpu: bool = True   # Saves GPU memory
     use_mixed_precision: bool = True       # Use torch.amp where possible
 
     # 🧵 Dataloader performance
@@ -110,8 +110,8 @@ class ServerConfig:
 @dataclass
 class PathConfig:
     data_root: Path = Path("./data")
-    dysarthric_dir: Path = Path("./data/raw/0")
-    clear_dir: Path = Path("./data/raw/1")
+    dysarthric_dir: Path = Path("./data/raw/1")
+    clear_dir: Path = Path("./data/raw/0")
     checkpoint_dir: Path = Path("./checkpoints")
     log_dir: Path = Path("./logs")
     pretrained_dir: Path = Path("./pretrained")

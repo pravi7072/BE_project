@@ -24,6 +24,8 @@ def setup_logger(name: str, log_file: str = None, level=logging.INFO):
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
         file_handler.setFormatter(console_formatter)
+        if logger.hasHandlers():
+            logger.handlers.clear()
         logger.addHandler(file_handler)
     
     return logger

@@ -33,18 +33,27 @@ def collate_fn(batch: List[Dict[str, Any]]):
         if all(torch.is_tensor(v) for v in values):
             tensors = list(values)
             # for mel: shape usually (n_mels, T)
-            if tensors[0].dim() == 2:
+            if all(t.dim() == 2 for t in tensors):
+                # 🔥 FIX: use tensors directly (not batch again)
                 max_t = max(t.shape[-1] for t in tensors)
-                padded = torch.stack([torch.nn.functional.pad(t, (0, max_t - t.shape[-1])) for t in tensors])
-                out[key] = padded
+                padded = [
+                    torch.nn.functional.pad(t, (0, max_t - t.shape[-1]))
+                    for t in tensors
+                ]
+                out[key] = torch.stack(padded)
             elif tensors[0].dim() == 1:
                 out[key] = torch.nn.utils.rnn.pad_sequence(tensors, batch_first=True)
             else:
                 try:
                     out[key] = torch.stack(tensors)
                 except Exception:
-                    # fallback list
-                    out[key] = list(tensors)
+                    # 🔥 FIX: FORCE PAD + STACK instead of list
+                    if tensors[0].dim() >= 2:
+                        max_t = max(t.shape[-1] for t in tensors)
+                        padded = [torch.nn.functional.pad(t, (0, max_t - t.shape[-1])) for t in tensors]
+                        out[key] = torch.stack(padded)
+                    else:
+                        out[key] = torch.nn.utils.rnn.pad_sequence(tensors, batch_first=True)
         else:
             # Non-tensor metadata: return list (in original order)
             ordered = [None] * len(batch)

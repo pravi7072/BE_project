@@ -175,8 +175,17 @@ class ScaleDiscriminatorVocoder(nn.Module):
             nn.Conv1d(1024, 1024, 41, 1, groups=16, padding=20),
             nn.Conv1d(1024, 1024, 5, 1, padding=2),
         ])
-        
+        # self.convs = nn.ModuleList([
+        #     nn.Conv1d(1, 64, 15, 1, padding=7),
+        #     nn.Conv1d(64, 64, 41, 2, groups=4, padding=20),
+        #     nn.Conv1d(64, 128, 41, 2, groups=8, padding=20),
+        #     nn.Conv1d(128, 256, 41, 4, groups=8, padding=20),
+        #     nn.Conv1d(256, 512, 41, 4, groups=8, padding=20),
+        #     nn.Conv1d(512, 512, 41, 1, groups=8, padding=20),
+        #     nn.Conv1d(512, 512, 5, 1, padding=2),
+        # ])
         self.output = nn.Conv1d(1024, 1, 3, 1, padding=1)
+        # self.output = nn.Conv1d(512, 1, 3, 1, padding=1)
     
     def forward(self, x):
         features = []

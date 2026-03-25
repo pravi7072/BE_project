@@ -164,10 +164,13 @@ async def convert_file(file: UploadFile = File(...)):
                 audio_processor.load_audio(str(input_path))
             )
             
-            # Extract mel
             mel = feature_extractor.extract_mel(torch.FloatTensor(audio))
-            
-            # Convert
+
+            if mel.dim() == 2:
+                mel = mel.unsqueeze(0)
+
+            mel = mel.to(config.device)
+
             audio_clear = model_manager.convert(mel)
             
             # Post-process

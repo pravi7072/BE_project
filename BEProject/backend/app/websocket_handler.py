@@ -149,18 +149,20 @@ class WebSocketHandler:
                 mel_chunk = self.feature_extractor.extract_mel(
                     torch.FloatTensor(audio_chunk)
                 )
-                
+                if mel_chunk.dim() == 2:
+                    mel_chunk = mel_chunk.unsqueeze(0)
                 # Convert to clear speech
                 start_time = time.time()
                 audio_clear, session['context'] = self.model_manager.convert_streaming(
-                    mel_chunk.squeeze(0),
+                    mel_chunk,
                     context=session['context']
                 )
                 inference_time = time.time() - start_time
                 
                 # Convert to numpy
-                audio_clear_np = audio_clear.squeeze().cpu().numpy()
-                
+                audio_clear_np = audio_clear.squeeze().detach().cpu().numpy()
+                audio_clear_np = np.nan_to_num(audio_clear_np)
+                audio_clear_np = np.clip(audio_clear_np, -1.0, 1.0)
                 # Apply de-emphasis filter
                 audio_clear_np = self.audio_processor.apply_deemphasis(audio_clear_np)
                 

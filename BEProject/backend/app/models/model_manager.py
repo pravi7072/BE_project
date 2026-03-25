@@ -4,14 +4,14 @@ import torch.nn as nn
 import os
 from typing import Optional, Dict
 import numpy as np
-
+from backend.app.models.pretrained_vocoder import PretrainedHiFiGAN
 class ModelManager:
     """Manages model loading, optimization, and inference"""
     
     def __init__(self, config, checkpoint_path: Optional[str] = None):
         self.config = config
         self.device = config.device
-        
+        self.use_pretrained_vocoder = True
         # Initialize models
         self._init_models()
         
@@ -41,7 +41,19 @@ class ModelManager:
         self.speaker_encoder = SpeakerEncoder(self.config).to(self.device)
         
         # Vocoder
-        self.vocoder = HiFiGANGenerator(self.config).to(self.device)
+        # self.vocoder = HiFiGANGenerator(self.config).to(self.device)
+        # Vocoder (switchable)
+        if self.use_pretrained_vocoder:
+            print("✅ Using PRETRAINED vocoder")
+
+            self.vocoder = PretrainedHiFiGAN(
+                checkpoint_path="pretrained/generator_v1",
+                config_path="pretrained/config_v1.json",
+                device=self.device
+            )
+        else:
+            print("⚠️ Using TRAINABLE vocoder")
+            self.vocoder = HiFiGANGenerator(self.config).to(self.device)
         
         # Set to eval mode
         self.generator.eval()
@@ -60,7 +72,9 @@ class ModelManager:
             self.generator = self.generator.half()
             self.ppg_extractor = self.ppg_extractor.half()
             self.speaker_encoder = self.speaker_encoder.half()
-            self.vocoder = self.vocoder.half()
+            # self.vocoder = self.vocoder.half()
+            if not self.use_pretrained_vocoder:
+             self.vocoder = self.vocoder.half()
 
         # --------------------------
         # ⚠️ DISABLE torch.compile
@@ -77,6 +91,13 @@ class ModelManager:
             self.generator = torch.quantization.quantize_dynamic(
                 self.generator, {nn.Linear, nn.Conv1d}, dtype=torch.qint8
             )
+
+    def get_model_info(self):
+        return {
+            "device": str(self.device),
+            "half_precision": self.config.use_half_precision,
+            "quantized": self.config.use_quantization,
+        }
         
     def load_checkpoint(self, checkpoint_path: str):
         """Load model weights from checkpoint"""
@@ -95,8 +116,11 @@ class ModelManager:
         if 'Speaker_encoder' in checkpoint:
             self.speaker_encoder.load_state_dict(checkpoint['Speaker_encoder'], strict=False)
         
-        if 'Vocoder' in checkpoint:
-            self.vocoder.load_state_dict(checkpoint['Vocoder'], strict=False)
+        # if 'Vocoder' in checkpoint:
+        #     self.vocoder.load_state_dict(checkpoint['Vocoder'], strict=False)
+        if not self.use_pretrained_vocoder:
+            if 'Vocoder' in checkpoint:
+                self.vocoder.load_state_dict(checkpoint['Vocoder'], strict=False)
         
         print("Checkpoint loaded successfully")
     
@@ -111,33 +135,49 @@ class ModelManager:
 
         mel_dysarthric = mel_dysarthric.to(self.device)
 
-        # Keep everything consistent dtype
-        if self.config.use_half_precision:
-            mel_dysarthric = mel_dysarthric.half()
-        else:
-            mel_dysarthric = mel_dysarthric.float()
-
-        # Extract features
+        # dtype consistency
+        # if self.config.use_half_precision:
+        #     mel_dysarthric = mel_dysarthric.half()
+        # else:
+        #     mel_dysarthric = mel_dysarthric.float()
+        mel_dysarthric = mel_dysarthric.float()
+        # ---------------------------
+        # Feature extraction
+        # ---------------------------
         ppg = self.ppg_extractor(mel_dysarthric)
         speaker_emb = self.speaker_encoder(mel_dysarthric)
 
-        # Generate clear mel
+        # ---------------------------
+        # 🔥 GENERATOR (MISSING BEFORE)
+        # ---------------------------
         mel_clear = self.generator(ppg, speaker_emb)
+
+        # ---------------------------
+        # 🔥 FIX: log-mel → linear mel
+        # ---------------------------
+        mel_clear = torch.clamp(mel_clear, min=-11.5, max=2.0)
+        print("mel_clear range:", mel_clear.min().item(), mel_clear.max().item())
+
+        # mel_clear = torch.pow(10.0, mel_clear)
 
         print("Generated mel shape:", mel_clear.shape)
 
-        # Ensure correct mel format for vocoder (B, 80, T)
+        # ---------------------------
+        # Ensure correct shape (B, 80, T)
+        # ---------------------------
         if mel_clear.dim() == 3 and mel_clear.shape[1] != 80:
             mel_clear = mel_clear.transpose(1, 2)
             print("Transposed mel shape:", mel_clear.shape)
 
-        # Ensure vocoder input dtype matches model dtype
-        if self.config.use_half_precision:
-            mel_clear = mel_clear.half()
-        else:
-            mel_clear = mel_clear.float()
-
+        # dtype for vocoder
+        # if self.config.use_half_precision:
+        #     mel_clear = mel_clear.float()
+        # else:
+        #     mel_clear = mel_clear.float()
+        mel_clear = mel_clear.float()
+        # ---------------------------
         # Vocoder
+        # ---------------------------
         audio_clear = self.vocoder(mel_clear)
 
         print("Generated audio shape:", audio_clear.shape)
@@ -166,8 +206,9 @@ class ModelManager:
             }
         
         mel_chunk = mel_chunk.unsqueeze(0).to(self.device)
-        if self.config.use_half_precision:
-            mel_chunk = mel_chunk.half()
+        # if self.config.use_half_precision:
+        #     mel_chunk = mel_chunk.half()
+        mel_chunk = mel_chunk.float()
         
         # Extract or reuse speaker embedding (cached for sessionf)
         if context['speaker_emb'] is None:
@@ -180,6 +221,10 @@ class ModelManager:
         mel_clear = self.generator(ppg, context['speaker_emb'])
         
         # Convert to audio
+        # audio_clear = self.vocoder(mel_clear)
+        mel_clear = torch.clamp(mel_clear, min=-11.5, max=2.0)
+        # mel_clear = torch.pow(10.0, mel_clear)
+        mel_clear = mel_clear.float()
         audio_clear = self.vocoder(mel_clear)
         
         # Update context

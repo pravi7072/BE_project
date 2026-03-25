@@ -4,7 +4,7 @@ import sys
 import os
 import argparse
 import torch
-
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # -----------------------------------------------------------------------------
 # ✅ Environment setup for CUDA stability & memory management
 # -----------------------------------------------------------------------------
@@ -14,9 +14,9 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # optional: silence TensorFlow oneDNN
 
 # Always use 'spawn' for torch multiprocessing (safer for CUDA)
 try:
-    mp.set_start_method("spawn", force=True)
+    mp.set_start_method("fork", force=True)
 except RuntimeError:
-    pass  # already set
+    pass # already set
 
 # Add backend to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
