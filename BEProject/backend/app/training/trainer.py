@@ -520,8 +520,9 @@ class Trainer:
 
                 if noise_std > 0:
                     fake_C = fake_C + noise_std * torch.randn_like(fake_C)
-                fake_C = torch.clamp(fake_C, -11.5, 2.0)
-                fake_C = torch.nan_to_num(fake_C, nan=0.0, posinf=2.0, neginf=-11.5)
+                # fake_C = torch.clamp(fake_C, -11.5, 2.0) # 🔥 CRITICAL FIX: stabilize generator output before any further processing
+                # fake_C = torch.nan_to_num(fake_C, nan=0.0, posinf=2.0, neginf=-11.5)
+                fake_C = torch.nan_to_num(fake_C, nan=0.0)  # optional safety only
 
 
                 min_len_C = min(fake_C.size(2), mel_C.size(2))
@@ -535,8 +536,9 @@ class Trainer:
                 # Forward: C → I
                 # -------------------------
                 fake_I = self.G_C2I(ppg_C, spk_C)
-                fake_I = torch.clamp(fake_I, -11.5, 2.0)
-                fake_I = torch.nan_to_num(fake_I, nan=0.0, posinf=2.0, neginf=-11.5)
+                # fake_I = torch.clamp(fake_I, -11.5, 2.0) # 🔥 CRITICAL FIX: stabilize generator output before any further processing
+                # fake_I = torch.nan_to_num(fake_I, nan=0.0, posinf=2.0, neginf=-11.5)
+                fake_I = torch.nan_to_num(fake_I, nan=0.0)
 
                 min_len_I = min(fake_I.size(2), mel_I.size(2))
                 fake_I = fake_I[:, :, :min_len_I]
@@ -554,52 +556,68 @@ class Trainer:
                     disc_real_C, feat_real_C = self.D_C(mel_C_trim.float())
                     disc_real_I, feat_real_I = self.D_I(mel_I_trim.float())
 
+                # # -------------------------
+                # # Vocoder (for perceptual loss)
+                # # -------------------------
+                # try:
+                #     mel_for_vocoder = torch.clamp(fake_C.detach(), -11.5, 2.0)
+
+                #     # if self.offload_vocoder:
+                #     #     # with torch.no_grad():
+                #     #     #     audio_fake_C = self.Vocoder(mel_for_vocoder.float().cpu())
+
+                #     #     # audio_fake_C = audio_fake_C.to(self.device, dtype=torch.float32, non_blocking=True)
+                #     #     with torch.no_grad():
+                #     #         audio_fake_C = audio_fake_C.to(self.device)
+                #     with torch.no_grad():
+                #         if self.offload_vocoder:
+                #             audio_fake_C = self.Vocoder(mel_for_vocoder.float().cpu()).to(self.device)
+                #         else:
+                #             audio_fake_C = self.Vocoder(mel_for_vocoder.float().to(self.device))
+
+                #     audio_real_C = batch["clear_audio"].unsqueeze(1).to(self.device)
+                #     # align length
+                #     min_len = min(audio_fake_C.size(-1), audio_real_C.size(-1))
+                #     audio_fake_C = audio_fake_C[..., :min_len]
+                #     audio_real_C = audio_real_C[..., :min_len]
+                #     # 🔥 CRITICAL FIX: stabilize waveform before loss
+                #     audio_fake_C = torch.clamp(audio_fake_C, -1.0, 1.0)
+                #     audio_real_C = torch.clamp(audio_real_C, -1.0, 1.0)
+
+                #     audio_fake_C = torch.nan_to_num(audio_fake_C, nan=0.0)
+                #     audio_real_C = torch.nan_to_num(audio_real_C, nan=0.0)
+
+                # except Exception as e_v:
+                #     print(f"[WARN] Vocoder forward failed: {e_v}")
+                #     sr = getattr(self.config, "audio", {}).get("sample_rate", 16000)
+                #     audio_fake_C = torch.zeros((mel_C.size(0), 1, sr), device=self.device)
+                #     audio_real_C = batch["clear_audio"].unsqueeze(1).to(self.device)
+                #     # align length
+                #     min_len = min(audio_fake_C.size(-1), audio_real_C.size(-1))
+                #     audio_fake_C = audio_fake_C[..., :min_len]
+                #     audio_real_C = audio_real_C[..., :min_len]
+                #     # 🔥 CRITICAL FIX: stabilize waveform before loss
+                #     audio_fake_C = torch.clamp(audio_fake_C, -1.0, 1.0)
+                #     audio_real_C = torch.clamp(audio_real_C, -1.0, 1.0)
+
+                #     audio_fake_C = torch.nan_to_num(audio_fake_C, nan=0.0)
+                #     audio_real_C = torch.nan_to_num(audio_real_C, nan=0.0)
                 # -------------------------
-                # Vocoder (for perceptual loss)
+                # Vocoder (DEBUG ONLY — no loss)
                 # -------------------------
                 try:
-                    mel_for_vocoder = torch.clamp(fake_C.detach(), -11.5, 2.0)
-
-                    # if self.offload_vocoder:
-                    #     # with torch.no_grad():
-                    #     #     audio_fake_C = self.Vocoder(mel_for_vocoder.float().cpu())
-
-                    #     # audio_fake_C = audio_fake_C.to(self.device, dtype=torch.float32, non_blocking=True)
-                    #     with torch.no_grad():
-                    #         audio_fake_C = audio_fake_C.to(self.device)
                     with torch.no_grad():
+                        mel_for_vocoder = torch.clamp(fake_C.detach(), -11.5, 2.0)
+
                         if self.offload_vocoder:
                             audio_fake_C = self.Vocoder(mel_for_vocoder.float().cpu()).to(self.device)
                         else:
                             audio_fake_C = self.Vocoder(mel_for_vocoder.float().to(self.device))
 
-                    audio_real_C = batch["clear_audio"].unsqueeze(1).to(self.device)
-                    # align length
-                    min_len = min(audio_fake_C.size(-1), audio_real_C.size(-1))
-                    audio_fake_C = audio_fake_C[..., :min_len]
-                    audio_real_C = audio_real_C[..., :min_len]
-                    # 🔥 CRITICAL FIX: stabilize waveform before loss
-                    audio_fake_C = torch.clamp(audio_fake_C, -1.0, 1.0)
-                    audio_real_C = torch.clamp(audio_real_C, -1.0, 1.0)
-
-                    audio_fake_C = torch.nan_to_num(audio_fake_C, nan=0.0)
-                    audio_real_C = torch.nan_to_num(audio_real_C, nan=0.0)
-
                 except Exception as e_v:
                     print(f"[WARN] Vocoder forward failed: {e_v}")
-                    sr = getattr(self.config, "audio", {}).get("sample_rate", 16000)
-                    audio_fake_C = torch.zeros((mel_C.size(0), 1, sr), device=self.device)
-                    audio_real_C = batch["clear_audio"].unsqueeze(1).to(self.device)
-                    # align length
-                    min_len = min(audio_fake_C.size(-1), audio_real_C.size(-1))
-                    audio_fake_C = audio_fake_C[..., :min_len]
-                    audio_real_C = audio_real_C[..., :min_len]
-                    # 🔥 CRITICAL FIX: stabilize waveform before loss
-                    audio_fake_C = torch.clamp(audio_fake_C, -1.0, 1.0)
-                    audio_real_C = torch.clamp(audio_real_C, -1.0, 1.0)
-
-                    audio_fake_C = torch.nan_to_num(audio_fake_C, nan=0.0)
-                    audio_real_C = torch.nan_to_num(audio_real_C, nan=0.0)
+                    sr = getattr(self.config.audio, "sample_rate", 16000)
+                    audio_fake_C = torch.zeros((fake_C.size(0), 1, sr), device=self.device)
 
                 # -------------------------
                 # Speaker features
@@ -610,20 +628,35 @@ class Trainer:
                 # -------------------------
                 # Generator loss
                 # -------------------------
+                # loss_G, losses_G = self.criterion.compute_generator_loss(
+                #     disc_fake_C + disc_fake_I,
+                #     feat_real_C + feat_real_I,
+                #     feat_fake_C + feat_fake_I,
+                #     fake_C,
+                #     mel_C_trim,  # ✅ FIXED
+                #     audio_fake_C,
+                #     audio_real_C,
+                #     ppg_fake_C,
+                #     ppg_I,
+                #     spk_fake_C,
+                #     spk_I,
+                #     rec_I,
+                #     mel_I_trim,  # ✅ FIXED
+                # )
                 loss_G, losses_G = self.criterion.compute_generator_loss(
                     disc_fake_C + disc_fake_I,
                     feat_real_C + feat_real_I,
                     feat_fake_C + feat_fake_I,
                     fake_C,
-                    mel_C_trim,  # ✅ FIXED
-                    audio_fake_C,
-                    audio_real_C,
+                    mel_C_trim,
+                    None,   # REMOVE audio_fake_C
+                    None,   # REMOVE audio_real_C
                     ppg_fake_C,
                     ppg_I,
                     spk_fake_C,
                     spk_I,
                     rec_I,
-                    mel_I_trim,  # ✅ FIXED
+                    mel_I_trim,
                 )
 
                 loss_G = loss_G / max(1, self.accum_steps)
@@ -654,7 +687,7 @@ class Trainer:
                 else:
                     self.optimizer_G.step()
             # AFTER loss computation
-            if self.global_step % 200 == 0:
+            if self.global_step % 100 == 0:
                 self.debug.check_nan(fake_C, "fake_C")
                 self.debug.check_nan(mel_C_trim, "mel_C")
                 self.debug.log_mel_stats(fake_C, mel_C_trim, self.global_step)
@@ -680,12 +713,16 @@ class Trainer:
                 self.debug.save_audio(self.Vocoder, fake_C_debug, real_C_debug, self.global_step)
                 self.debug.check_loss(loss_G, "Generator Loss")
 
-            if self.global_step % 200 == 0:
+            if self.global_step % 100 == 0:
                 print(f"Step {self.global_step} | Loss_G: {loss_G.item():.4f}")
+                # print("Loss breakdown:",
+                #     losses_G["mel"].item(),
+                #     losses_G["wave"].item(),
+                #     losses_G["stft"].item())
                 print("Loss breakdown:",
-                    losses_G["mel"].item(),
-                    losses_G["wave"].item(),
-                    losses_G["stft"].item())
+                    losses_G["adv"].item(),
+                    losses_G["fm"].item(),
+                    losses_G["cycle"].item())
             
             # ---------- Discriminator step ----------
             if self.global_step % self.accum_steps == 0:

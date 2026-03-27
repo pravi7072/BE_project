@@ -112,7 +112,7 @@ class MultiResolutionSTFTLoss(nn.Module):
         if x.dim() == 3:
             x = x.squeeze(1)
 
-        x = x.to(self.device)
+        # x = x.to(self.device)
         window = torch.hann_window(win).to(self.device)
 
         spec= torch.abs(torch.stft(
@@ -125,8 +125,25 @@ class MultiResolutionSTFTLoss(nn.Module):
         ))
         return torch.clamp(spec, min=1e-7)
 
+    # def forward(self, fake, real):
+    #     loss = 0
+
+    #     for fft, hop, win in zip(self.fft_sizes, self.hop_sizes, self.win_lengths):
+    #         mf = self.stft_mag(fake, fft, hop, win)
+    #         mr = self.stft_mag(real, fft, hop, win)
+
+    #         if mf.size(-1) != mr.size(-1):
+    #             mf, mr = _center_crop_time(mf, mr)
+
+    #         sc = torch.mean(torch.abs(mf - mr)) / (torch.mean(torch.abs(mr)) + 1e-8)
+    #         log = F.l1_loss(torch.log(mf + 1e-7), torch.log(mr + 1e-7))
+
+    #         loss += sc + log
+
+    #     return loss / len(self.fft_sizes)
     def forward(self, fake, real):
-        loss = 0
+        loss_sc = 0.0
+        loss_log = 0.0
 
         for fft, hop, win in zip(self.fft_sizes, self.hop_sizes, self.win_lengths):
             mf = self.stft_mag(fake, fft, hop, win)
@@ -135,12 +152,22 @@ class MultiResolutionSTFTLoss(nn.Module):
             if mf.size(-1) != mr.size(-1):
                 mf, mr = _center_crop_time(mf, mr)
 
-            sc = torch.mean(torch.abs(mf - mr)) / (torch.mean(torch.abs(mr)) + 1e-8)
-            log = F.l1_loss(torch.log(mf + 1e-7), torch.log(mr + 1e-7))
+            # Spectral Convergence (correct as-is)
+            sc = torch.norm(mr - mf, p='fro') / (torch.norm(mr, p='fro') + 1e-8)
 
-            loss += sc + log
+            # Log STFT magnitude loss (FIXED: properly normalized)
+            log_mf = torch.log(mf + 1e-7)
+            log_mr = torch.log(mr + 1e-7)
 
-        return loss / len(self.fft_sizes)
+            log = torch.norm(log_mr - log_mf, p=1) / (torch.norm(log_mr, p=1) + 1e-8)
+
+            loss_sc += sc
+            loss_log += log
+
+        loss_sc /= len(self.fft_sizes)
+        loss_log /= len(self.fft_sizes)
+
+        return loss_sc + loss_log
 
 
 # ---------------------------
@@ -201,16 +228,16 @@ class CombinedLoss:
         loss_adv = self.gan_loss.generator_loss(disc_fake)
         loss_fm = self.feature_matching.forward(feat_real, feat_fake)
 
-        # ✅ CRITICAL FIX
-        loss_mel = self.mel_loss.forward(mel_fake, mel_real)
+        # # ✅ CRITICAL FIX
+        # loss_mel = self.mel_loss.forward(mel_fake, mel_real)
 
-        # vocoder-related
-        loss_wave = self.wave_loss.forward(audio_fake, audio_real)
-        loss_stft = self.stft_loss(audio_fake, audio_real )
+        # # vocoder-related
+        # loss_wave = self.wave_loss.forward(audio_fake, audio_real)
+        # loss_stft = self.stft_loss(audio_fake, audio_real )
 
-        # 🔥 PROTECTION
-        if torch.isnan(loss_stft) or torch.isinf(loss_stft):
-            loss_stft = torch.zeros_like(loss_stft)
+        # # 🔥 PROTECTION
+        # if torch.isnan(loss_stft) or torch.isinf(loss_stft):
+        #     loss_stft = torch.zeros_like(loss_stft)
 
         loss_cycle = self.cycle_loss.forward(recon, original)
         loss_ppg = self.ppg_loss.forward(ppg_fake, ppg_real)
@@ -218,22 +245,37 @@ class CombinedLoss:
 
         cfg = self.config.training
 
+        # total = (
+        #     cfg.lambda_gan * loss_adv +
+        #     cfg.lambda_feat_match * loss_fm +
+        #     cfg.lambda_mel * loss_mel +
+        #     0.5 * loss_wave +
+        #     0.2 * loss_stft +
+        #     cfg.lambda_cycle * loss_cycle +
+        #     cfg.lambda_ppg * loss_ppg +
+        #     cfg.lambda_speaker * loss_spk
+        # )
         total = (
-            cfg.lambda_gan * loss_adv +
-            cfg.lambda_feat_match * loss_fm +
-            cfg.lambda_mel * loss_mel +
-            0.5 * loss_wave +
-            0.2 * loss_stft +
-            cfg.lambda_cycle * loss_cycle +
-            cfg.lambda_ppg * loss_ppg +
-            cfg.lambda_speaker * loss_spk
-        )
+        cfg.lambda_gan * loss_adv +
+        cfg.lambda_feat_match * loss_fm +
+        cfg.lambda_cycle * loss_cycle +
+        cfg.lambda_ppg * loss_ppg +
+        cfg.lambda_speaker * loss_spk
+    )
 
+        # return total, {
+        #     "total": total,
+        #     "mel": loss_mel,
+        #     "wave": loss_wave,
+        #     "stft": loss_stft
+        # }
         return total, {
             "total": total,
-            "mel": loss_mel,
-            "wave": loss_wave,
-            "stft": loss_stft
+            "adv": loss_adv,
+            "fm": loss_fm,
+            "cycle": loss_cycle,
+            "ppg": loss_ppg,
+            "spk": loss_spk
         }
 
     def compute_discriminator_loss(self, real, fake):

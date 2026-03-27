@@ -27,11 +27,19 @@ class DebugMonitor:
         try:
             with torch.no_grad():
                 # 🔥 ALWAYS send mel to CPU (your vocoder supports this)
-                mel_fake = torch.clamp(fake_C[0].float(), -11.5, 2.0).unsqueeze(0).cpu()
-                mel_real = torch.clamp(real_C[0].float(), -11.5, 2.0).unsqueeze(0).cpu()
+                # mel_fake = torch.clamp(fake_C[0].float(), -11.5, 2.0).unsqueeze(0).cpu()
+                # mel_real = torch.clamp(real_C[0].float(), -11.5, 2.0).unsqueeze(0).cpu()
 
-                audio_fake = vocoder(mel_fake).squeeze().cpu().numpy()
-                audio_real = vocoder(mel_real).squeeze().cpu().numpy()
+                # audio_fake = vocoder(mel_fake).squeeze().cpu().numpy()
+                # audio_real = vocoder(mel_real).squeeze().cpu().numpy()
+                mel_fake = fake_C[0].detach().float()
+                mel_real = real_C[0].detach().float()
+
+                mel_fake_clamped = torch.clamp(mel_fake, -11.5, 2.0).unsqueeze(0).cpu()
+                mel_real_clamped = torch.clamp(mel_real, -11.5, 2.0).unsqueeze(0).cpu()
+
+                audio_fake = vocoder(mel_fake_clamped).squeeze().cpu().numpy()
+                audio_real = vocoder(mel_real_clamped).squeeze().cpu().numpy()
 
                 audio_fake = np.nan_to_num(audio_fake)
                 audio_real = np.nan_to_num(audio_real)

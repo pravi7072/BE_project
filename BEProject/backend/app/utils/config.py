@@ -78,13 +78,18 @@ class TrainingConfig:
     cudnn_deterministic: bool = False      # Faster if you don’t need reproducibility
     torch_compile: bool = False            # Enable for PyTorch 2.x (small speedup)
 
-    # Loss weights
+    # # Loss weights
+    # lambda_gan: float = 1.0
+    # lambda_cycle: float = 10.0
+    # lambda_ppg: float = 5.0
+    # lambda_speaker: float = 2.0
+    # lambda_mel: float = 45.0
+    # lambda_feat_match: float = 2.0
     lambda_gan: float = 1.0
-    lambda_cycle: float = 10.0
-    lambda_ppg: float = 5.0
-    lambda_speaker: float = 2.0
-    lambda_mel: float = 45.0
-    lambda_feat_match: float = 2.0
+    lambda_feat_match: float = 10.0   # 🔥 CRITICAL FIX
+    lambda_cycle: float = 5.0
+    lambda_ppg: float = 1.0
+    lambda_speaker: float = 1.0
 
     # Logging & checkpoints
     save_every: int = 5

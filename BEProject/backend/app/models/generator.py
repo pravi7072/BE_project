@@ -169,7 +169,7 @@ class Generator(nn.Module):
         # Output
         mel = self.output_conv(x)
         # Optional mild stabilization (SAFE)
-        # mel = torch.tanh(mel) * 7.0 - 5.0
-        mel = torch.tanh(mel) * 6.0 - 6.0
+        mel = torch.tanh(mel) * 7.0 - 5.0
+        # mel = torch.tanh(mel) * 6.0 - 6.0
 
         return mel
