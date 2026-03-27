@@ -86,10 +86,11 @@ class TrainingConfig:
     # lambda_mel: float = 45.0
     # lambda_feat_match: float = 2.0
     lambda_gan: float = 1.0
-    lambda_feat_match: float = 10.0   # 🔥 CRITICAL FIX
+    lambda_feat_match: float = 12.0   # 🔥 CRITICAL FIX
     lambda_cycle: float = 5.0
     lambda_ppg: float = 1.0
     lambda_speaker: float = 1.0
+    lambda_mel = 5.0
 
     # Logging & checkpoints
     save_every: int = 5

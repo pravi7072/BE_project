@@ -99,7 +99,10 @@ class AudioProcessor:
     def estimate_noise_profile(self, audio: np.ndarray, noise_duration: float = 0.5) -> np.ndarray:
         try:
             noise_samples = int(noise_duration * self.sample_rate)
+            # seg = audio[:min(noise_samples, len(audio))]
             seg = audio[:min(noise_samples, len(audio))]
+            if len(seg) < self._n_fft:
+                seg = np.pad(seg, (0, self._n_fft - len(seg)))
             stft_noise = librosa.stft(seg, n_fft=self._n_fft, hop_length=self._hop_length)
             profile = np.mean(np.abs(stft_noise), axis=1).astype(np.float32)
             self.noise_profile = profile

@@ -16,7 +16,7 @@ env/
 # ===========================
 BEProject/cache/
 BEProject/data/
-BEProject/checkpoints/
+# BEProject/checkpoints/
 BEProject/logs/
 BEProject/debug/audio
 # ===========================

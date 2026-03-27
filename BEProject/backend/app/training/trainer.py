@@ -70,6 +70,7 @@ class Trainer:
         self.debug_feature_extractor = FeatureExtractor(self.config)
         # self.debug = DebugMonitor(sample_rate=16000)
         self.debug = DebugMonitor(sample_rate=self.config.audio.sample_rate)
+        self.fixed_debug_batch = None
         # device selection (allow override via config)
         device_cfg = getattr(config, "device", None)
         if device_cfg is None:
@@ -470,6 +471,11 @@ class Trainer:
         if resume_skip:
             print(f"[RESUME] Skipping first {resume_skip} batches of epoch {self.epoch} (already processed).")
         for batch_idx, batch in enumerate(pbar):
+            if self.fixed_debug_batch is None:
+                self.fixed_debug_batch = {
+                    k: v.clone().detach() if torch.is_tensor(v) else v
+                    for k, v in batch.items()
+                }
             # skip resume batches
             if resume_skip and batch_idx < resume_skip:
                 # update progress counters but do not train on this batch
@@ -690,7 +696,7 @@ class Trainer:
             if self.global_step % 100 == 0:
                 self.debug.check_nan(fake_C, "fake_C")
                 self.debug.check_nan(mel_C_trim, "mel_C")
-                self.debug.log_mel_stats(fake_C, mel_C_trim, self.global_step)
+                
                 # self.debug.save_audio(self.Vocoder, fake_C, mel_C_trim, self.global_step)
                 # fake_C_debug = torch.clamp(fake_C.detach(), -11.5, 2.0)
                 # real_C_debug = torch.clamp(mel_C_trim.detach(), -11.5, 2.0)
@@ -699,18 +705,54 @@ class Trainer:
                 # ✅ use ORIGINAL mel (NOT trimmed)
                 # real_C_debug = torch.clamp(mel_C.detach(), -11.5, 2.0)
                 # 🔥 RECOMPUTE MEL from raw audio (MATCH test_vocoder)
+                # with torch.no_grad():
+                #     audio_real = batch["clear_audio"][0].cpu()
+
+                #     mel_real = self.debug_feature_extractor.extract_mel(audio_real.unsqueeze(0))
+                #     print("DEBUG MEL RANGE:", mel_real.min().item(), mel_real.max().item())
+
+                #     real_C_debug = torch.clamp(mel_real, -11.5, 2.0).to(self.device)
+
+                # # fake can stay trimmed (generator output)
+                # fake_C_debug = torch.clamp(fake_C.detach(), -11.5, 2.0)
+
+                # self.debug.save_audio(self.Vocoder, fake_C_debug, real_C_debug, self.global_step)
+                # -------------------------
+                # FIXED DEBUG SAMPLE
+                # -------------------------
+                debug_batch = self.fixed_debug_batch
+
+                debug_batch = {
+                    k: v.to(self.device) if torch.is_tensor(v) else v
+                    for k, v in debug_batch.items()
+                }
+
                 with torch.no_grad():
-                    audio_real = batch["clear_audio"][0].cpu()
+                    mel_I_debug = debug_batch["dysarthric_mel"]
+                    mel_C_debug = debug_batch["clear_mel"]
 
-                    mel_real = self.debug_feature_extractor.extract_mel(audio_real.unsqueeze(0))
-                    print("DEBUG MEL RANGE:", mel_real.min().item(), mel_real.max().item())
+                    if mel_I_debug.dim() == 4:
+                        mel_I_debug = mel_I_debug.squeeze(1)
+                    if mel_C_debug.dim() == 4:
+                        mel_C_debug = mel_C_debug.squeeze(1)
 
-                    real_C_debug = torch.clamp(mel_real, -11.5, 2.0).to(self.device)
+                    ppg_I_debug = self.PPG_extractor(mel_I_debug)
+                    spk_I_debug = self.Speaker_encoder(mel_I_debug)
 
-                # fake can stay trimmed (generator output)
-                fake_C_debug = torch.clamp(fake_C.detach(), -11.5, 2.0)
+                    fake_C_debug = self.G_I2C(ppg_I_debug, spk_I_debug)
 
-                self.debug.save_audio(self.Vocoder, fake_C_debug, real_C_debug, self.global_step)
+                    real_C_debug = mel_C_debug
+
+                fake_C_debug = torch.clamp(fake_C_debug, -11.5, 2.0)
+                real_C_debug = torch.clamp(real_C_debug, -11.5, 2.0)
+                self.debug.log_mel_stats(fake_C_debug, real_C_debug, self.global_step)
+
+                self.debug.save_audio(
+                    self.Vocoder,
+                    fake_C_debug,
+                    real_C_debug,
+                    self.global_step
+                )
                 self.debug.check_loss(loss_G, "Generator Loss")
 
             if self.global_step % 100 == 0:
