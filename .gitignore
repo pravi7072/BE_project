@@ -18,9 +18,7 @@ BEProject/cache/
 BEProject/data/
 BEProject/checkpoints/
 BEProject/logs/
-BEProject/pretrained/
-BEProject/outputs/
-
+BEProject/debug/audio
 # ===========================
 # Frontend Node Modules
 # ===========================
